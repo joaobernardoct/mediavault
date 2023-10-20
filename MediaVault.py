@@ -1,10 +1,12 @@
+import csv
 import os
 import re
+import sys
 import shutil
-from datetime import datetime, timedelta      # utils date 
+from datetime import datetime, timedelta      # utils date
 from hachoir.parser import createParser       # utils video
 from hachoir.metadata import extractMetadata  # utils video
-from PIL import Image                         # utils image
+from PIL import Image as PILImage             # utils image
 from PIL.ExifTags import TAGS                 # utils image
 
 
@@ -14,77 +16,36 @@ from PIL.ExifTags import TAGS                 # utils image
 #                        GENERAL SETTINGS                        #
 ##################################################################
 
-# if the number of images in a day is > NR_IMAGES_PER_DAY they will be placed in a folder
-NR_IMAGES_PER_DAY = 10
+# If you're feeling lucky, the script will look for a capture date even if it is not on
+# the file's metadata. Note that while this extends the script's capabilities, it is way
+# more error prone. Use at your own risk.
+IM_FEELING_LUCKY = True
 
-# sets the end of a day
-# > e.g. photos at 03:00 usually relate to the end of the previous day and not the beggining of the next
-# > this does not change the date of the photo itself, it is only used when creating folders 
+# Organize into folders properties:
+# (i) If the number of files belonging to a certain day is > NR_IMAGES_PER_DAY , they'll be
+#     placed on a folder for that day
+# (ii) Sets the end of a day
+#      e.g. photos at 04:00 usually relate to the end of the previous day and not the beggining of the next
+#      Note that this does not change the date of the photo itself, it is only used when creating folders
+NR_IMAGES_PER_DAY = 20
 WEE_SMALL_HOURS_OF_THE_MORNING = datetime.strptime("04.00.00", "%H.%M.%S")
 
-# TODO FORMAT (descrever cada variavel abaixo)
-# essas variaveis devia ser uma lista e a pessoa escolhe o indice do formato e.g. OUTPUT_FORMAT[1] então usa também OUTPUT_FORMAT_REGEX[1]
-# no fundo o que é "GENERAL SETTING" é só a macro "CHOSEN_FORMAT = 1" e depois as duas vars abaixo vão ser usadas assim
-#
-OUTPUT_FORMAT = "%Y.%m.%d (%Hh%Mm%Ss)"
-OUTPUT_FORMAT_REGEX = "r'^\d{4}\.\d{2}\.\d{2} \(\d{2}h\d{2}m\d{2}s\)$'"
-
-# README file under the unprocessed images and videos folder 
-UNPROCESSED_FOLDER_README = '''
-    This folder includes all unprocessed files. 
-    
-    IMAGES:
-        The images supported follow the EXIF standard, which defines specific metadata 
-            tags for digital images taken by cameras or other imaging devices.
-    
-        These includes (not extensively):
-            .jpg (JPEG)
-            .tif or .tiff (Tagged Image File Format)
-            .gif (Graphics Interchange Format)
-            .bmp (Bitmap Image File)
-            .raw (Camera RAW Image File)
-            .cr2 (Canon RAW Image File)
-            .nef (Nikon RAW Image File)
-            .orf (Olympus RAW Image File)
-            .arw (Sony RAW Image File)
-            .rw2 (Panasonic RAW Image File)
-            .dng (Digital Negative Image File)
-            .jpeg (JPEG)
-            .heic (High Efficiency Image Format)
-            .heif (High Efficiency Image Format).
-
-        These excludes (not extensively):
-            .png (Portable Network Graphics)
+# Whether we should also traverse subdirs. It is safer to be turned off
+TRAVERSE_SUBDIRS = True
 
 
-    VIDEOS:
-        The videos supported, whilst not following a specific standard, include capture date
-            metadata in the format "%Y-%m-%d %H:%M:%S".
 
-        These includes (not extensively):
-            .mp4 (MP4)
-            .mov (QuickTime)
-            .mkv (Matroska)
-            .avi (AVI)
-            .flv (Flash Video)
-            .webm (WebM)
-            .m4v (M4V)
+##################################################################
+#                             MACROS                             #
+##################################################################
+EXIF_STANDARD_CREATION_DATE = 1998
 
-
-    Support for additional extensions might be considered in the future.
-    Joao
-    2023 
-    '''
-    
-# README file under the other files folder 
-OTHER_FILES_FOLDER_README = '''
-    This folder includes all files that are neither images nor videos. 
-    
-
-    Support for additional file types (e.g. audio) might be considered in the future.
-    Joao
-    2023 
-    '''
+DATE_FORMAT = "%Y.%m.%d"
+DATE_FORMAT_REGEX = r"(\d{4}\.\d{2}\.\d{2})"
+TIME_FORMAT = "%H.%M.%S"
+TIME_FORMAT_REGEX = r"(\d{2}\.\d{2}\.\d{2})"
+OUTPUT_FORMAT = "%Y.%m.%d (%Hh%Mm%Ss)" # This represents how the images will be renamed
+OUTPUT_FORMAT_REGEX = r"(\d{4}\.\d{2}\.\d{2}) \((\d{2}h\d{2}m\d{2}s)\)"
 
 
 
@@ -94,190 +55,340 @@ OTHER_FILES_FOLDER_README = '''
 ##################################################################
 class Main():
     def __init__(self):
-        self.imageHandler = ImageHandler()
-        self.videoHandler = VideoHandler()
-        self.imgs_per_date = {}       # tracks the number of images per date (to organize into folders) 
+        self.organizer = Organizer()
+
+    def run(self):
+        for root, dirs, files in os.walk('.'):
+            for filename in sorted(files):
+                file = os.path.join(root, filename)
+                self.organizer.ingestFile(file)
+
+            if not TRAVERSE_SUBDIRS:
+                break
+
+        self.organizer.organize()
+
+        print("Success ;)")
 
 
-    def create_auxiliar_structures(self):
-        # Structure for unprocessed images and videos
-        os.makedirs("./_Unprocessed images and videos", exist_ok=True)
-        try:
-            with open("./_Unprocessed images and videos/README.txt", 'w') as file:
-                file.write(UNPROCESSED_FOLDER_README)
-        except Exception as e:
-            pass
-
-        # Structure for unsupported files
-        os.makedirs("./_Other files", exist_ok=True)
-        try:
-            with open("./_Other files/README.txt", 'w') as file:
-                file.write(OTHER_FILES_FOLDER_README)
-        except Exception as e:
-            pass
 
 
-    def rename(self, filename, capture_date):
-            '''
-            capture date should follow the format "YYYY.MM.DD (HHhMMmSSs)"
-            '''
+########################################################################
+#                               ORGANIZER                              #
+#                                                                      #
+# 1st: .ingestFile - Ingest a file and process it, i.e. store the      #
+#                    file path, capture date and capture time on a csv #
+# 2nd: .organize - Rename and organize photos into folders using the   #
+#                  generated csv content                               #
+########################################################################
+class Organizer():
 
-            # ensure date is in the correct format. else, move to unprocessed
-            invalid_format = False
-            if capture_date is None:
-                invalid_format = True
-            elif re.match(OUTPUT_FORMAT_REGEX, capture_date) is None:
-                invalid_format = True
-            elif int(capture_date[:4]) < 1998: # EXIF standard's creation date
-                invalid_format = True
-            if invalid_format:
-                shutil.move(os.path.join(".", filename), "./_Unprocessed images and videos")
+    def __init__(self):
+        # instantiate necessary classes
+        self.imageProcessor = ImageProcessor()
+        self.videoProcessor = VideoProcessor()
+        self.hero           = UnprocessedImageAndVideoProcessor()
+        self.mediaVaultCsv  = MediaVaultCSV()
+
+        # dateCounter --> tracks the number of images per date (to organize into folders)
+        self.dateCounter = {}
+
+        # processedFolder --> the abs path to the folder where processed images should be placed
+        self.processedFolder = os.getcwd() + "/" + "_Media Vault" + "/"
+        if not os.path.exists(self.processedFolder):
+            os.makedirs(self.processedFolder, exist_ok=True)
+
+        # logFile --> each rename/move operation will be logged here
+        logFilePath = self.processedFolder + "_log.md"
+        if not os.path.exists(logFilePath):
+            self.logFile = open(logFilePath, "w", newline='') 
+            self.logFile.write("| Old File Path | New File Path |\n")
+            self.logFile.write("| ------------- | ------------- |\n") 
+        else:
+            self.logFile = open(logFilePath , "a", newline='')
+
+
+    # The entrypoint for file processing
+    def ingestFile(self, filename):
+            # NOTE: captureDate expects a tuple  ("YYYY.MM.DD" , "HH.MM.SS")
+            isImage   = self.imageProcessor.isImage(filename)
+            isVideo   = self.videoProcessor.isVideo(filename)
+
+            # If the file type is not supported, ignore the file
+            if (not isVideo and not isImage):
                 return
 
-            # ensure the new filename does not yet exist
-            counter = 1
-            extension = os.path.splitext(filename)[1]
-            unique_new_filename = f"{capture_date}{extension}"
-            while (os.path.exists(unique_new_filename)):
-                unique_new_filename = f"{capture_date} ({counter}){extension}"
-                counter += 1
+            # Process file (by metadata)
+            if isImage:
+                captureDate = self.imageProcessor.getImageCaptureDate(filename)
+            elif isVideo:
+                captureDate = self.videoProcessor.getVideoCaptureDate(filename)
 
-            if not (os.path.exists(unique_new_filename)):
-                # rename image with new_filename
-                os.rename(filename, unique_new_filename)
-                # increase date counter
-                date = unique_new_filename[:10]
-                self.imgs_per_date[date] = self.imgs_per_date.get(date, 0) + 1
+            # Process file (without metadata)
+            #   If the capture date was not retrieve using metadata and IM_FEELING_LUCKY is set to true,
+            #   try to retrieve the capture date with other (more error prone) methodologies
+            if captureDate[0] is None and IM_FEELING_LUCKY:
+                captureDate = self.hero.getCaptureDateFromFilename(filename)
+
+            date = captureDate[0]
+            time = captureDate[1]
+            filePath = os.path.abspath(filename)
+
+            # Validate capture date - if it is not valid, ignore the file
+            if not self.isValidCaptureDate(date, time):
+                return
+
+            # If the capture date is valid, store file information into csv
+            fileDataToPersistOnCSV = {
+                'OriginalPath': filePath,
+                'CaptureDate': date,
+                'CaptureTime': time,
+                'NewPath' : ''
+            }
+            self.mediaVaultCsv.write(fileDataToPersistOnCSV)
+
+            # Additionally, update the dateCounter
+            dateToCount = self.weeSmallHoursOfTheMorning(date, time)
+            self.dateCounter[dateToCount] = self.dateCounter.get(dateToCount, 0) + 1
+
+
+    def isValidCaptureDate(self, date, time):
+        if date is None:
+            return False
+        condition1 = int(date[:4]) >= EXIF_STANDARD_CREATION_DATE
+        condition2 = re.match(DATE_FORMAT_REGEX, date) is not None
+        condition3 = re.match(TIME_FORMAT_REGEX, time) is not None if time is not None else True
+        return (condition1 and condition2 and condition3)
 
 
     def organize(self):
-        for filename in os.listdir("./"):
-            if not len(filename) > 20 or not os.path.isfile(filename):
-                continue
-            date = filename[:10]
-            hour = filename[12:14] + "." + filename[15:17] + "." + filename[18:20] # TODO FORMAT - Hour depende de output format. deve ser convertida em HH.MM.SS
-                                                                                    # usar datetime para converter de output format para YYYY.MM.DD HH.MM.SS e depois parse that
-            # the next 2 lines are really cool ;)
-            # the folder in which the image goes to is calculated based on WEE_SMALL_HOURS_OF_THE_MORNING
-            time_difference = abs( int( (datetime.strptime(hour, "%H.%M.%S") - WEE_SMALL_HOURS_OF_THE_MORNING).days ) )
-            date = str( (datetime.strptime(date, "%Y.%m.%d") - timedelta(days=time_difference)) ).replace("-",".")[:10]
-            if self.imgs_per_date.get(date, 0) >= NR_IMAGES_PER_DAY:
-                os.makedirs("./" + date, exist_ok=True)
-                # move
-                shutil.move(os.path.join(".", filename), "./" + date)
-    
-
-    def display_output(self):
-        print("Store Images: successfully renamed files.")
-        processed_count = len([file for file in os.listdir("./") if os.path.isfile(os.path.join("./", file))])
-        print("Processed images:     " + str(processed_count))
-        unprocessed_count = len([file for file in os.listdir("./_Unprocessed images and videos") if os.path.isfile(os.path.join("./_Unprocessed images and videos", file))])
-        unprocessed_count += len([file for file in os.listdir("./_Other files") if os.path.isfile(os.path.join("./_Other files", file))])
-        print("Unprocessed images:   " + str(unprocessed_count))
-        seconds = processed_count * 10 / 60
-        time_saved = "{:02d}:{:02d}".format( int((seconds % 3600) // 60) , int(seconds % 60) ) # TODO: Add days (ask ChatGPT)
-        print("Time saved (HH:MM):   " + time_saved) # assumption: each img takes 10 sec to rename manually
-
-
-    def run(self):
-        # (1) CREATE AUXILIAR files and folders
-        self.create_auxiliar_structures()
-
-        # (2) TRAVERSE each file and rename it
-        for filename in sorted(os.listdir(os.getcwd())):
-
-            # process an image
-            if self.imageHandler.is_image(filename):
-                capture_date = self.imageHandler.get_image_capture_date(filename)
-                self.rename(filename, capture_date)
-
-            # process a video
-            elif self.videoHandler.is_video(filename):
-                capture_date = self.videoHandler.get_video_capture_date(filename)   
-                self.rename(filename, capture_date)
-
-            # process everything else
-            else:
-                if (os.path.isfile(filename) and filename != "StoreArtifacts.py"):
-                    shutil.move(os.path.join(".", filename), "./_Other files")
-
-
-        # (3) ORGANIZE files into folders
-        self.organize()
-
-        # (4) FINISH and display output
-        self.display_output()
-
-
-
-
-##################################################################
-#                          IMAGE HANDLER                         #
-#                                                                #
-#  Is called by main to retrieve the capture date from an image  #
-##################################################################
-class ImageHandler():
-
-    def is_image(self, file_path):
+        
+        # Setup the csv reader
+        reader = self.mediaVaultCsv.read()
         try:
-            Image.open(file_path)
+            # Skip the header row
+            next(reader)
+        except StopIteration:
+            # If there is not a second row, there are no entries
+            print ("No files were processed.")
+            sys.exit(0)
+
+        # Traverse csv to rename and organize each file
+        for row in reader:
+            oldFilePath = row[0]
+            date = row[1]
+            time = row[2]
+
+            # Calculate relative date
+            relativeDate = self.weeSmallHoursOfTheMorning(date, time)
+            relativeYear = relativeDate[:4]
+
+            # Calculate the new file location and create the necessary folder structure
+            newFileLocation = self.processedFolder + relativeYear + "/"     # .../YYYY
+            if self.dateCounter.get(relativeDate, 0) >= NR_IMAGES_PER_DAY:
+                newFileLocation += relativeDate + "/"                       # .../YYYY/YYYY.MM.DD
+            os.makedirs(newFileLocation, exist_ok=True)
+
+            # Calculate the new file name
+            fileExtension = os.path.splitext(oldFilePath)[1]
+            newFileName = self.renameWithCaptureDate(newFileLocation, fileExtension, date, time)
+
+            # Rename and move the file and log this changes
+            os.rename(oldFilePath, newFileLocation + newFileName)
+            self.logFile.write('|' + oldFilePath + '|' + newFileLocation + newFileName + '|\n')
+        
+        # After traversing, delete mediaVaultCsv
+        self.mediaVaultCsv.delete()
+        
+
+    # Responsible for the logic of WEE_SMALL_HOURS_OF_THE_MORNING
+    # Returns a date
+    def weeSmallHoursOfTheMorning(self, date, time):
+        # if time is not available, don't perform any computation, just return the date
+        if not time:
+            return date
+        time_difference = abs( int( (datetime.strptime(time, "%H.%M.%S") - WEE_SMALL_HOURS_OF_THE_MORNING).days ) )
+        date = str( (datetime.strptime(date, "%Y.%m.%d") - timedelta(days=time_difference)) ).replace("-",".")[:10]
+        return date
+
+
+    # Responsible for returning the new file name
+    def renameWithCaptureDate(self, newFileLocation, fileExtension, date, time):
+        # Calculate newFilename
+        if time:
+            newFilename = str(datetime.strptime(date + ' ' + time, DATE_FORMAT + ' ' + TIME_FORMAT).strftime(OUTPUT_FORMAT))
+        else:
+            newFilename = date
+
+        # Find a unique filename (to ensure we avoid overriding on the newFileLocation)
+        counter = 1
+        newUniqueFilename = f"{newFilename}{fileExtension}"
+        while (os.path.exists(newFileLocation + newUniqueFilename)):
+            newUniqueFilename = f"{newFilename} ({counter}){fileExtension}"
+            counter += 1
+
+        return newUniqueFilename
+
+
+
+##################################################################
+#                         MEDIA VAULT CSV                        #
+##################################################################
+class MediaVaultCSV():
+
+    def __init__(self):
+        # csvFile --> a csv where ingest() will write and from which organize() will read afterwards
+        self.csvFile = os.getcwd() + "/" + "mediaVaultData.csv"
+        self.setup()        
+
+
+    # Sets up the mediaVaultCsv on instantiation
+    def setup(self):
+        if os.path.exists(self.csvFile):
+            print("ERROR: A mediaVaultData.csv already exists in the working directory. Will not override it.")
+            sys.exit(1)  # Halt the program as it should not run with logging its changes
+
+        try:
+            headerCSV = {
+                'OriginalPath': 'OriginalPath',
+                'CaptureDate': 'CaptureDate',
+                'CaptureTime': 'CaptureTime',
+                'NewPath' : 'NewPath'
+            }
+            self.write(headerCSV)
+        except Exception as e:
+            print("ERROR: Was not able to create/write to data.csv. Halting.")
+            print(e)
+            sys.exit(1) # Halt
+
+
+    # Writes a row to the mediaVaultData.csv provided a dictionary with the following fields:
+    # 'OriginalPath' , 'CaptureDate' , 'CaptureTime' , 'NewPath' (the order needs to be followed!)
+    def write(self, row):
+        with open(self.csvFile, "a", newline='') as file:
+            # Write the header to the CSV file
+            csv.writer(file).writerow(row.values())
+        file.close()
+
+
+    # Returns a csv.reader
+    def read(self):
+        # Setup the csv reader
+        try:
+            file = open(self.csvFile, 'r')
+            reader = csv.reader(file)
+            if reader:
+                return reader
+            else:
+                # If the CSV is empty, halt the program
+                print("ERROR: CSV file is empty. Halting.")
+                sys.exit(1)
+        except Exception as e:
+            print ("ERROR: " + e)
+            sys.exit(1)
+
+
+    def delete(self):
+        if os.path.exists(self.csvFile):
+            os.remove(self.csvFile)
+
+
+
+##################################################################
+#                         IMAGE PROCESSOR                        #
+##################################################################
+class ImageProcessor():
+
+    def isImage(self, file_path):
+        try:
+            PILImage.open(file_path)
             return True
         except (IOError, SyntaxError):
             return False
 
-    # either returns the capture date as a string in format "YYYY.MM.DD (HHhMMmSSs)" or None
-    def get_image_capture_date(self, image_path):
-        # retrieve capture date
+    # Returns the capture date as a tuple ("YYYY.MM.DD" , "HH.MM.SS")
+    def getImageCaptureDate(self, imagePath):
         try:
-            image = Image.open(image_path)
-            exif_data = image._getexif()
-            for tag_id, value in exif_data.items():
-                tag_name = TAGS.get(tag_id, tag_id)
-                if tag_name == "DateTimeOriginal":
+            image = PILImage.open(imagePath)
+            for tag_id, value in image._getexif().items():
+                if TAGS.get(tag_id, tag_id) == "DateTimeOriginal":
+                    capture_date = str(value)
 
-                    capture_date = str(value).replace(":", ".")
-                    input_format = "%Y.%m.%d %H.%M.%S"
-                    return str(datetime.strptime(capture_date, input_format).strftime(OUTPUT_FORMAT))
-
-        except (AttributeError, KeyError, IndexError):
+                    input_format = "%Y:%m:%d %H:%M:%S"
+                    date = str(datetime.strptime(capture_date, input_format).strftime(DATE_FORMAT))
+                    time = str(datetime.strptime(capture_date, input_format).strftime(TIME_FORMAT))
+                    return (date, time)
+        except Exception as e:
             pass
-
-        return None       
-
-
-
-
+        return (None, None)
 
 
 
 
 ##################################################################
-#                          VIDEO HANDLER                         #
-#                                                                #
-#  Is called by main to retrieve the capture date from a video   #
+#                         VIDEO PROCESSOR                        #
 ##################################################################
-class VideoHandler():
+class VideoProcessor():
 
-    def is_video(self, video_path):
-        # only allow video formats that typically store capture dates in the format "%Y-%m-%d %H:%M:%S"
+    def isVideo(self, video_path):
+        # We currently only support video formats that typically store capture dates in the format "%Y-%m-%d %H:%M:%S"
         video_extensions = ['.mp4', '.mov', '.mkv', '.avi', '.flv', '.webm', '.m4v']
         file_extension = os.path.splitext(video_path)[1].lower()
         return file_extension in video_extensions
 
-    # either returns the capture date as a string in format "YYYY.MM.DD (HHhMMmSSs)" or None
-    def get_video_capture_date(self, video_path):
-        # retrieve capture date
+    # Returns the capture date as a tuple ("YYYY.MM.DD" , "HH.MM.SS")
+    def getVideoCaptureDate(self, video_path):
         try:
+            capture_date = str(extractMetadata(createParser(video_path)).get('creation_date'))
 
-            parser = createParser(video_path)
-            capture_date = str(extractMetadata(parser).get('creation_date')).replace("-", ".").replace(":", ".")
-            input_format = "%Y.%m.%d %H.%M.%S"
-            return str(datetime.strptime(capture_date, input_format).strftime(OUTPUT_FORMAT))
-        
+            input_format = "%Y-%m-%d %H:%M:%S"
+            date = str(datetime.strptime(capture_date, input_format).strftime(DATE_FORMAT))
+            time = str(datetime.strptime(capture_date, input_format).strftime(TIME_FORMAT))
+            return (date, time)
         except Exception as e:
             pass
+        return (None, None)
 
-        return None
+
+
+
+##################################################################
+#             UNPROCESSED IMAGE AND VIDEO PROCESSOR              #
+##################################################################
+class UnprocessedImageAndVideoProcessor():
+
+    # Returns the capture date as a tuple ("YYYY.MM.DD" , "HH.MM.SS")
+    # TODO expand cases
+    def getCaptureDateFromFilename(self, imagePath):
+        filename = os.path.basename(imagePath)
+
+        searchPatternList = [ r'IMG_(\d{4})(\d{2})(\d{2})' , # Whatsapp image or video
+                      r'WhatsApp Image (\d{4})-(\d{2})-(\d{2}) at (\d{2})\.(\d{2})\.(\d{2})' , # Whatsapp image (old)
+                      r'WhatsApp Video (\d{4})-(\d{2})-(\d{2}) at (\d{2})\.(\d{2})\.(\d{2})' , # Whatsapp video (old)
+                      r'Screenshot_(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})' , # Samsung phone screenshots
+                      r'(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})' , # Samsung phone camera roll
+                      r'(\d{4})\.(\d{2})\.(\d{2}) \((\d{2})h(\d{2})m(\d{2})s\)' # This script (so it is idempotent)
+                    ]
+
+        for pattern in searchPatternList:
+            match = re.search(pattern, filename)
+            if match:
+                # if it matched a date
+                if match.re.groups == 3:
+                    year, month, day = match.groups()
+                    date = year + "." + month + "." + day
+                    return (date, None)
+                # if it matched a date and a time
+                elif match.re.groups == 6:
+                    year, month, day, hour, minute, second = match.groups()
+                    date = year + "." + month + "." + day
+                    time = hour + "." + minute + "." + second
+                    return (date, time)
+                # if it didn't match
+                else:
+                    print (None, None)
+
+
 
 
 
@@ -289,13 +400,19 @@ class VideoHandler():
 main = Main()
 main.run()
 
-'''
-#TODO
-O formato em que renomeia as fotos devia ser uma macro e devia ser possível escolher entre três tipos diferentes. Seria mesmo fácil
-porque só é usado em três sitios que vão ficar identificados com #TODO FORMAT
 
-Esta lógica deve ser bem pensada para o código ser mais easy e fácil de alterar no futuro tbh
 
-Acho que se podia criar uma classe "DateUtils" em que tudo o que é datas é processado lá e 
-basta dar-se a string com a data e uma string com o formato em que está a data
-'''
+
+################################
+# How to setup the environment #
+################################
+# TODO should have a .sh script to set this up
+# sudo apt-get update
+# sudo apt install python3-pip
+# pip install hachoir
+# pip install PILLOW
+
+
+# TODO
+# * Create a Validator class that before renaming checks stuff like "Is the date we're trying to rename bigger than file creation date? If so, don't move, that's odd"
+#   * more case: Is the date in the future? e.g. 2050? If so, don't move
