@@ -19,7 +19,7 @@ from PIL.ExifTags import TAGS                 # utils image
 # If you're feeling lucky, the script will look for a capture date even if it is not on
 # the file's metadata. Note that while this extends the script's capabilities, it is way
 # more error prone. Use at your own risk.
-IM_FEELING_LUCKY = True
+IM_FEELING_LUCKY = False
 
 # Organize into folders properties:
 # (i) If the number of files belonging to a certain day is > NR_IMAGES_PER_DAY , they'll be
@@ -28,10 +28,10 @@ IM_FEELING_LUCKY = True
 #      e.g. photos at 04:00 usually relate to the end of the previous day and not the beggining of the next
 #      Note that this does not change the date of the photo itself, it is only used when creating folders
 NR_IMAGES_PER_DAY = 20
-WEE_SMALL_HOURS_OF_THE_MORNING = datetime.strptime("04.00.00", "%H.%M.%S")
+WEE_SMALL_HOURS_OF_THE_MORNING = "04.00.00"
 
 # Whether we should also traverse subdirs. It is safer to be turned off
-TRAVERSE_SUBDIRS = True
+TRAVERSE_SUBDIRS = False
 
 
 
@@ -207,7 +207,10 @@ class Organizer():
         # if time is not available, don't perform any computation, just return the date
         if not time:
             return date
-        time_difference = abs( int( (datetime.strptime(time, "%H.%M.%S") - WEE_SMALL_HOURS_OF_THE_MORNING).days ) )
+
+        timeFormatted         = (datetime.strptime(time, "%H.%M.%S")
+        timeEndOfDayFormatted = datetime.strptime(WEE_SMALL_HOURS_OF_THE_MORNING , "%H.%M.%S")
+        time_difference = abs( int(timeFormatted - timeEndOfDayFormatted).days) )
         date = str( (datetime.strptime(date, "%Y.%m.%d") - timedelta(days=time_difference)) ).replace("-",".")[:10]
         return date
 
