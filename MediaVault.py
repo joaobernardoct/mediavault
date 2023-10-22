@@ -208,9 +208,9 @@ class Organizer():
         if not time:
             return date
 
-        timeFormatted         = (datetime.strptime(time, "%H.%M.%S")
+        timeFormatted         = datetime.strptime(time, "%H.%M.%S")
         timeEndOfDayFormatted = datetime.strptime(WEE_SMALL_HOURS_OF_THE_MORNING , "%H.%M.%S")
-        time_difference = abs( int(timeFormatted - timeEndOfDayFormatted).days) )
+        time_difference = abs( int( (timeFormatted - timeEndOfDayFormatted).days ) )
         date = str( (datetime.strptime(date, "%Y.%m.%d") - timedelta(days=time_difference)) ).replace("-",".")[:10]
         return date
 
