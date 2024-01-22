@@ -19,7 +19,7 @@ from PIL.ExifTags import TAGS                 # utils image
 # If you're feeling lucky, the script will look for a capture date even if it is not on
 # the file's metadata. Note that while this extends the script's capabilities, it is way
 # more error prone. Use at your own risk.
-IM_FEELING_LUCKY = False
+IM_FEELING_LUCKY = True
 
 # Organize into folders properties:
 # (i) If the number of files belonging to a certain day is > NR_IMAGES_PER_DAY , they'll be
@@ -27,13 +27,18 @@ IM_FEELING_LUCKY = False
 # (ii) Sets the end of a day
 #      e.g. photos at 04:00 usually relate to the end of the previous day and not the beggining of the next
 #      Note that this does not change the date of the photo itself, it is only used when creating folders
-NR_IMAGES_PER_DAY = 20
+NR_IMAGES_PER_DAY = 15
 WEE_SMALL_HOURS_OF_THE_MORNING = "04.00.00"
 
+# Store photos in monthly folders inside of the yearly folder
+# i.e. store photos in YYYY/MM if true / YYYY if false
+MONTHLY_PARTITION = True
+
 # Whether we should also traverse subdirs. It is safer to be turned off
-TRAVERSE_SUBDIRS = False
+TRAVERSE_SUBDIRS = True
 
-
+# Debug mode (increased verbosity)
+DEBUG = True
 
 ##################################################################
 #                             MACROS                             #
@@ -60,6 +65,8 @@ class Main():
     def run(self):
         for root, dirs, files in os.walk('.'):
             for filename in sorted(files):
+                if(DEBUG):
+                    print("Scanning: " + filename)
                 file = os.path.join(root, filename)
                 self.organizer.ingestFile(file)
 
@@ -123,18 +130,22 @@ class Organizer():
                 captureDate = self.imageProcessor.getImageCaptureDate(filename)
             elif isVideo:
                 captureDate = self.videoProcessor.getVideoCaptureDate(filename)
+            
+            # Sanity check #1 - if it is invalid, put it as None,None so IM_FEELING_LUCKY can pick it up
+            # IMPORTANT TODO: THIS VALIDATION SHOULD MOVE INTO BOTH getImageCaptureDate(...) and getVideoCaptureDate(...)
+            captureDate = captureDate if self.isValidCaptureDate(captureDate[0], captureDate[1]) else (None,None)
 
             # Process file (without metadata)
             #   If the capture date was not retrieve using metadata and IM_FEELING_LUCKY is set to true,
             #   try to retrieve the capture date with other (more error prone) methodologies
             if captureDate[0] is None and IM_FEELING_LUCKY:
                 captureDate = self.hero.getCaptureDateFromFilename(filename)
-
+            
             date = captureDate[0]
             time = captureDate[1]
             filePath = os.path.abspath(filename)
-
-            # Validate capture date - if it is not valid, ignore the file
+            
+            # Sanity check #2 - If it is invalid, let's ignore the file
             if not self.isValidCaptureDate(date, time):
                 return
 
@@ -180,13 +191,17 @@ class Organizer():
             time = row[2]
 
             # Calculate relative date
-            relativeDate = self.weeSmallHoursOfTheMorning(date, time)
-            relativeYear = relativeDate[:4]
+            relativeDate  = self.weeSmallHoursOfTheMorning(date, time)
+            relativeYear  = relativeDate[:4]
+            relativeMonth = relativeDate[5:7]
 
             # Calculate the new file location and create the necessary folder structure
-            newFileLocation = self.processedFolder + relativeYear + "/"     # .../YYYY
+            if(MONTHLY_PARTITION):
+                newFileLocation = self.processedFolder + relativeYear + "/" + relativeMonth + "/"  # .../YYYY/MM
+            else:
+                newFileLocation = self.processedFolder + relativeYear + "/"     # .../YYYY
             if self.dateCounter.get(relativeDate, 0) >= NR_IMAGES_PER_DAY:
-                newFileLocation += relativeDate + "/"                       # .../YYYY/YYYY.MM.DD
+                newFileLocation += relativeDate + "/"                       # .../YYYY/MM/YYYY.MM.DD
             os.makedirs(newFileLocation, exist_ok=True)
 
             # Calculate the new file name
@@ -366,13 +381,14 @@ class UnprocessedImageAndVideoProcessor():
         filename = os.path.basename(imagePath)
 
         searchPatternList = [ r'IMG_(\d{4})(\d{2})(\d{2})' , # Whatsapp image or video
+                      r'IMG-(\d{4})(\d{2})(\d{2})' , # Idk
+                      r'VID-(\d{4})(\d{2})(\d{2})' , # Idk
                       r'WhatsApp Image (\d{4})-(\d{2})-(\d{2}) at (\d{2})\.(\d{2})\.(\d{2})' , # Whatsapp image (old)
                       r'WhatsApp Video (\d{4})-(\d{2})-(\d{2}) at (\d{2})\.(\d{2})\.(\d{2})' , # Whatsapp video (old)
                       r'Screenshot_(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})' , # Samsung phone screenshots
                       r'(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})' , # Samsung phone camera roll
                       r'(\d{4})\.(\d{2})\.(\d{2}) \((\d{2})h(\d{2})m(\d{2})s\)' # This script (so it is idempotent)
                     ]
-
         for pattern in searchPatternList:
             match = re.search(pattern, filename)
             if match:
@@ -387,9 +403,9 @@ class UnprocessedImageAndVideoProcessor():
                     date = year + "." + month + "." + day
                     time = hour + "." + minute + "." + second
                     return (date, time)
-                # if it didn't match
-                else:
-                    print (None, None)
+        
+        # exit gracefully
+        return (None, None)
 
 
 
