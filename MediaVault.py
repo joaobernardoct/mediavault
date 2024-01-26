@@ -46,9 +46,7 @@ DEBUG = True
 EXIF_STANDARD_CREATION_DATE = 1998
 
 DATE_FORMAT = "%Y.%m.%d"
-DATE_FORMAT_REGEX = r"(\d{4}\.\d{2}\.\d{2})"
 TIME_FORMAT = "%H.%M.%S"
-TIME_FORMAT_REGEX = r"(\d{2}\.\d{2}\.\d{2})"
 OUTPUT_FORMAT = "%Y.%m.%d (%Hh%Mm%Ss)" # This represents how the images will be renamed
 OUTPUT_FORMAT_REGEX = r"(\d{4}\.\d{2}\.\d{2}) \((\d{2}h\d{2}m\d{2}s)\)"
 
@@ -166,10 +164,16 @@ class Organizer():
     def isValidCaptureDate(self, date, time):
         if date is None:
             return False
-        condition1 = int(date[:4]) >= EXIF_STANDARD_CREATION_DATE
-        condition2 = re.match(DATE_FORMAT_REGEX, date) is not None
-        condition3 = re.match(TIME_FORMAT_REGEX, time) is not None if time is not None else True
-        return (condition1 and condition2 and condition3)
+
+        # Check if date / time is valid
+        try:
+            datetime.strptime(date, DATE_FORMAT)
+            # Ensure a time exists
+            if time:
+                datetime.strptime(time, TIME_FORMAT)
+            return True
+        except ValueError:
+            return False
 
 
     def organize(self):
@@ -223,10 +227,10 @@ class Organizer():
         if not time:
             return date
 
-        timeFormatted         = datetime.strptime(time, "%H.%M.%S")
-        timeEndOfDayFormatted = datetime.strptime(WEE_SMALL_HOURS_OF_THE_MORNING , "%H.%M.%S")
+        timeFormatted         = datetime.strptime(time, TIME_FORMAT)
+        timeEndOfDayFormatted = datetime.strptime(WEE_SMALL_HOURS_OF_THE_MORNING , TIME_FORMAT)
         time_difference = abs( int( (timeFormatted - timeEndOfDayFormatted).days ) )
-        date = str( (datetime.strptime(date, "%Y.%m.%d") - timedelta(days=time_difference)) ).replace("-",".")[:10]
+        date = str( (datetime.strptime(date, DATE_FORMAT) - timedelta(days=time_difference)) ).replace("-",".")[:10]
         return date
 
 

@@ -64,3 +64,5 @@ python3 MediaVault.py
 * `2023.10.18` - Renamed the script from "StoreArtifacts" to "MediaVault". Refactored the script from end-to-end, mainly: (i) the Organizer class ingests files `.ingest()` and updates a csv with their path, capture date and time (ii) the Organizer class organizes files `.organize()` by traversing the mentioned csv (iii) whether to ingest files from subfolders is now a toggleable option (iv) the script now keeps a record `log.md` of each rename to allow rolling back to previous state.
 
 * `2024.01.22` - Added support for monthly organization in each yearly folder and fixed some small bugs
+
+* `2024.01.26` - Update validations for valid time and date
