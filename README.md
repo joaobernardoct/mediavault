@@ -1,29 +1,20 @@
 # README
 
-### What 
+### What is this?
+This script was designed to organize photos by (1) renaming them to their date and (2) generating a folder structure with yearly and monthly partitions. 
 
-...
-
-
-
-| Macro | Description | Default |
-| ----- | ----------- | ------- |
-| IM_FEELING_LUCKY | If you're feeling lucky, the script will look for a capture date even if it is not on the file's metadata. Note that while this extends the script's capabilities, it is way more error prone. Use at your own risk. | False | 
-| NR_IMAGES_PER_DAY | If the number of files belonging to a certain day is > NR_IMAGES_PER_DAY , they'll be placed on a folder for that day | 20 |
-|WEE_SMALL_HOURS_OF_THE_MORNING | Sets the end of a day. e.g. photos at 04:00 usually relate to the end of the previous day and not the beggining of the next. Note that this does not change the date of the photo itself, it is only used when creating folders | "04.00.00" |
-|TRAVERSE_SUBDIRS | Whether we should also traverse subdirs. It is safer to be turned off | False |
-
-
----
-
-### How to run
-
+An example follows:
 ```
-# add the script under the desired directory
-python3 MediaVault.py
+.
+├── 2022
+│   ├── 01
+│   |    └── 2023.01.01 (12h40m15s).jpg
+│   ├── 02
+│   ├── ...   
+│   └── 12
+└── 2023
+    └── ...
 ```
-
----
 
 ### Supported file types and extensions
 
@@ -34,9 +25,24 @@ python3 MediaVault.py
 
 **Noteworthy:** When metadata is not present, the script parses the name of the image to understand if there is a date that can be used. However, it is important to note that the date extracted from this procedure might not be the actual capture date (e.g. A photo was taken on 2020 and sent to you on 2022. Your file system will store it as if it was from 2022). Mark the flag `SHOULD_PROCESS_NOT_EXIF = false` to avoid this.
 
----
----
----
+### How to run
+
+Run it:
+```
+# add the script under the desired directory
+python3 MediaVault.py
+```
+
+Configure it:
+| Macro | Description | Default |
+| ----- | ----------- | ------- |
+| IM_FEELING_LUCKY | If you're feeling lucky, the script will look for a capture date even if it is not on the file's metadata. Note that while this extends the script's capabilities, it is way more error prone. Use at your own risk. | False | 
+| NR_IMAGES_PER_DAY | If the number of files belonging to a certain day is > NR_IMAGES_PER_DAY , they'll be placed on a folder for that day | 20 |
+|WEE_SMALL_HOURS_OF_THE_MORNING | Sets the end of a day. e.g. photos at 04:00 usually relate to the end of the previous day and not the beggining of the next. Note that this does not change the date of the photo itself, it is only used when creating folders | "04.00.00" |
+|MONTHLY_PARTITION| Whether we should create monthly partitions inside the yearly partition | True |
+|TRAVERSE_SUBDIRS | Whether we should also traverse subdirs. It is safer to be turned off | False |
+|DEBUG| Debug mode (increased verbosity) | False |
+
 ---
 ---
 ---
@@ -49,7 +55,7 @@ python3 MediaVault.py
 ---
 ---
 
-# Changelog
+# Relevant Changelog
                                             
 * `2019.09.21` - Renames WhatsApp images and videos from  "IMG-YYYYMMDD-WAXXXX" to "YYYY.MM.DD"
 
