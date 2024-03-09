@@ -29,9 +29,11 @@ An example follows:
 
 Run it:
 ```
-# add the script under the desired directory
+# add the script inside of the photos folder
 python3 MediaVault.py
 ```
+* Please note that you can also revert the MediaVault operation, by running the `revertMediaVault.py` script inside of the `_MediaVault/` generated directory
+
 
 Configure it:
 | Macro | Description | Default |
