@@ -77,4 +77,4 @@ Configure it:
 
 * `2024.01.26` - Update validations for valid time and date
 
-* `2024.03.09` - Adopt the Abstract Factory design pattern by turning classes such as "ImageProcessor" and "VideoProcessor" as subclasses of an abstract MediaProcessor, and then designing a factory to attribute one of those subclasses as a processor based on the filetype. In the near future I'd also like to restructure the whole approach between the Organizer.ingest() and Organizer.organize() methods and their interaction with the MediaVaultCSV class - it is awfully designed and probably poorly implemented.
+* `2024.03.09` - Add an option to revert the last execution of the script (finally!). Adopt the Abstract Factory design pattern by turning classes such as "ImageProcessor" and "VideoProcessor" as subclasses of an abstract MediaProcessor, and then designing a factory to attribute one of those subclasses as a processor based on the filetype. In the near future I'd also like to restructure the whole approach between the Organizer.ingest() and Organizer.organize() methods and their interaction with the MediaVaultCSV class - it is awfully designed and probably poorly implemented.
