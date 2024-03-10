@@ -27,13 +27,15 @@ An example follows:
 
 ### How to run
 
-Run it:
 ```
-# add the script inside of the photos folder
-python3 MediaVault.py
-```
-* Please note that you can also revert the MediaVault operation, by running the `revertMediaVault.py` script inside of the `_MediaVault/` generated directory
+# FIRST add the script inside of the photos folder
 
+# Execute the script
+python3 MediaVault.py
+
+# If needed, you can also revert the last execution of the script
+python3 MediaVault.py --revert
+```
 
 Configure it:
 | Macro | Description | Default |
@@ -74,3 +76,5 @@ Configure it:
 * `2024.01.22` - Added support for monthly organization in each yearly folder and fixed some small bugs
 
 * `2024.01.26` - Update validations for valid time and date
+
+* `2024.03.09` - Adopt the Abstract Factory design pattern by turning classes such as "ImageProcessor" and "VideoProcessor" as subclasses of an abstract MediaProcessor, and then designing a factory to attribute one of those subclasses as a processor based on the filetype. In the near future I'd also like to restructure the whole approach between the Organizer.ingest() and Organizer.organize() methods and their interaction with the MediaVaultCSV class - it is awfully designed and probably poorly implemented.
