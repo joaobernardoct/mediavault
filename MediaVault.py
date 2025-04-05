@@ -1,49 +1,59 @@
 import argparse
 import csv
+import logging
 import os
 import re
 import sys
 import shutil
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta      # utils date
+from enum import Enum
 from hachoir.parser import createParser       # utils video
 from hachoir.metadata import extractMetadata  # utils video
 from PIL import Image as PILImage             # utils image
 from PIL.ExifTags import TAGS                 # utils image
-
-
-
+from multiprocessing import Pool as ProcessPool
 
 ##################################################################
 # GENERAL SETTINGS
 ##################################################################
+'''
+Defines the verbosity level for the logs.
+DEBUG, INFO, WARNING, ERROR, CRITICAL
+'''
+LOGGER_LEVEL = "WARNING"
 
-# If you're feeling lucky, the script will look for a capture date even if it is not on
-# the file's metadata. Note that while this extends the script's capabilities, it is way
-# more error prone. Use at your own risk.
+logging.basicConfig(level=getattr(logging, LOGGER_LEVEL))
+logger = logging.getLogger(self.__class__.__name__)
+
+'''
+If you're feeling lucky, the script will look for a capture date even if it is not
+on the file's metadata. Note that while this extends the script's capabilities, 
+it is way more error prone. Use at your own risk.
+'''
 IM_FEELING_LUCKY = True
 
-# Organize into folders properties:
-# (i) If the number of files belonging to a certain day is > NR_IMAGES_PER_DAY , they'll be
-#     placed on a folder for that day
-# (ii) Sets the end of a day
-#      e.g. photos at 04:00 usually relate to the end of the previous day and not the beggining of the next
-#      Note that this does not change the date of the photo itself, it is only used when creating folders
+'''
+Organize into folders properties:
+(i) If the number of files belonging to a certain day is > NR_IMAGES_PER_DAY , they'll be
+    placed on a folder for that day
+(ii) Sets the end of a day
+     e.g. photos at 04:00 usually relate to the end of the previous day and not the beggining of the next
+     Note that this does not change the date of the photo itself, it is only used when creating folders
+'''
 NR_IMAGES_PER_DAY = 15
 WEE_SMALL_HOURS_OF_THE_MORNING = "04.00.00"
 
-# Store photos in monthly folders inside of the yearly folder
-# i.e. store photos in YYYY/MM if true / YYYY if false
+'''
+Store photos in monthly folders inside of the yearly folder
+i.e. store photos in YYYY/MM if true / YYYY if false
+'''
 MONTHLY_PARTITION = True
 
-# Whether we should also traverse subdirs. It is safer to be turned off
+'''
+Whether we should also traverse subdirs. It is safer to be turned off
+'''
 TRAVERSE_SUBDIRS = True
-
-# Debug mode (increased verbosity)
-DEBUG = True
-
-
-
 
 ##################################################################
 # MACROS
@@ -57,7 +67,6 @@ OUTPUT_FORMAT_REGEX = r"(\d{4}\.\d{2}\.\d{2}) \((\d{2}h\d{2}m\d{2}s)\)"
 
 
 
-
 ##################################################################
 # MEDIA VAULT
 ##################################################################
@@ -66,11 +75,10 @@ class MediaVault():
         self.organizer = Organizer()
 
     def run(self):
-        print("Starting to process...")
+        logger.info("Media Vault is starting.")
         for root, dirs, files in os.walk('.'):
             for filename in sorted(files):
-                if(DEBUG):
-                    print("\n---Scanning: " + filename)
+
                 file = os.path.join(root, filename)
                 self.organizer.ingestFile(file)
 
@@ -79,8 +87,24 @@ class MediaVault():
 
         self.organizer.organize()
 
-        print("\nSuccess ;)")
+        logger.info("Success ;)")
 
+
+
+##################################################################
+# VERBOSE LOGGER
+##################################################################
+class VerbositeLogger():
+    class Verbosity(Enum):
+        ERROR = 0
+        WARNING = 1
+        INFO = 2
+        DEBUG = 3
+
+    @staticmethod
+    def log(message, level):
+        if VERBOSITY_LEVEL >= level.value:
+            print(f"[{level.name}] {message}")
 
 
 
@@ -95,7 +119,6 @@ class MediaVault():
 class Organizer():
     def __init__(self):
         # instantiate necessary classes
-        self.mediaProcessorFactory = MediaProcessorFactory()
         self.mediaVaultCsv  = MediaVaultCSV()
 
         # dateCounter --> tracks the number of images per date (to organize into folders)
@@ -118,16 +141,21 @@ class Organizer():
 
     def ingestFile(self, file_path):
         ''' The entrypoint for individual file processing '''
+        
+        logger.debug(f"Scanning: {file_path}")
+
+        # TODO: add support for non ascii filenames
+        if not file_path.isascii():
+            return
+
         # Ask MediaProcessorFactory for a processor to process the file
         try:
-            processor = self.mediaProcessorFactory.create_processor(file_path)
+            processor = MediaProcessorFactory().create_processor(file_path)
             capture_date = processor.process(file_path)
         except (MediaProcessor.FileTypeNotSupportedException , MediaProcessor.CouldNotExtractCaptureDateException) as e:
-            if (DEBUG):
-                print("Exception: ", e)
+            logger.debug(e)
             # File could not be processed
             return
-        
         date = capture_date[0]
         time = capture_date[1]
         file_abs_path = os.path.abspath(file_path)
@@ -148,7 +176,6 @@ class Organizer():
 
 
     def organize(self):
-        
         # Setup the csv reader
         reader = self.mediaVaultCsv.read()
         try:
@@ -228,7 +255,6 @@ class Organizer():
 # MEDIA VAULT CSV
 ##################################################################
 class MediaVaultCSV():
-
     def __init__(self):
         # csvFile --> a csv where ingest() will write and from which organize() will read afterwards
         self.csvFile = os.getcwd() + "/" + "mediaVaultData.csv"
@@ -238,7 +264,7 @@ class MediaVaultCSV():
     # Sets up the mediaVaultCsv on instantiation
     def setup(self):
         if os.path.exists(self.csvFile):
-            print("ERROR: A mediaVaultData.csv already exists in the working directory. Will not override it.")
+            logger.error("A mediaVaultData.csv already exists in the working directory. Will not override it.")
             sys.exit(1)  # Halt the program as it should not run with logging its changes
 
         # TODO BAH - do we really need headers here to then skip the first row on organizer.organize()? rethink this, looks awful
@@ -251,8 +277,7 @@ class MediaVaultCSV():
             }
             self.write(headerCSV)
         except Exception as e:
-            print("ERROR: Was not able to create/write to data.csv. Halting.")
-            print(e)
+            logger.error(f"Halting. Unable to create/write to MediaVaultData.csv due to: {str(e)}.")
             sys.exit(1) # Halt
 
 
@@ -275,10 +300,10 @@ class MediaVaultCSV():
                 return reader
             else:
                 # If the CSV is empty, halt the program
-                print("ERROR: CSV file is empty. Halting.")
+                logger.error("MediaVaultCsv file is empty. Halting.")
                 sys.exit(1)
         except Exception as e:
-            print ("ERROR: " + e)
+            logger.error(f"{str(e)}")
             sys.exit(1)
 
 
@@ -293,7 +318,7 @@ class MediaVaultCSV():
 ##################################################################
 class MediaProcessor(ABC):
     class FileTypeNotSupportedException(Exception):
-        ''' This exception will be raised if no subclass can process the file '''
+        ''' This exception will be raised if the file extension is not supported '''
         pass
 
     class CouldNotExtractCaptureDateException(Exception):
@@ -341,14 +366,22 @@ class MediaProcessor(ABC):
             this method will try to retrieve it from the filename '''
         filename = os.path.basename(file_path)
         SEARCH_PATTERNS_LIST = [
-            r'IMG_(\d{4})(\d{2})(\d{2})',  # Whatsapp image or video
-            r'IMG-(\d{4})(\d{2})(\d{2})',   # Idk
-            r'VID-(\d{4})(\d{2})(\d{2})',   # Idk
-            r'WhatsApp Image (\d{4})-(\d{2})-(\d{2}) at (\d{2})\.(\d{2})\.(\d{2})',  # Whatsapp image (old)
-            r'WhatsApp Video (\d{4})-(\d{2})-(\d{2}) at (\d{2})\.(\d{2})\.(\d{2})',  # Whatsapp video (old)
-            r'Screenshot_(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})',   # Samsung phone screenshots
-            r'(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})',   # Samsung phone camera roll
-            r'(\d{4})\.(\d{2})\.(\d{2}) \((\d{2})h(\d{2})m(\d{2})s\)'  # This script (so it is idempotent)
+            # Whatsapp
+            r'IMG_(\d{4})(\d{2})(\d{2})',
+            r'WhatsApp Image (\d{4})-(\d{2})-(\d{2}) at (\d{2})\.(\d{2})\.(\d{2})',
+            r'WhatsApp Video (\d{4})-(\d{2})-(\d{2}) at (\d{2})\.(\d{2})\.(\d{2})',
+            r'IMG_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})', 
+            r'IMG-(\d{4})(\d{2})(\d{2})',
+            r'VID-(\d{4})(\d{2})(\d{2})',
+            # Samsung phone 2022
+            r'Screenshot_(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})',
+            r'(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})',
+            # This script (and older versions) so it is idempotent
+            r'(\d{4})\.(\d{2})\.(\d{2}) \((\d{2})h(\d{2})m(\d{2})s\)',
+            r'(\d{4})\.(\d{2})\.(\d{2}) (?: \(\d+\))?',
+            # Other
+            r'WIN-(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})',
+            r'WIN-(\d{4})(\d{2})(\d{2})_(\d{2})_(\d{2})_(\d{2})_Pro'
         ]
         for pattern in SEARCH_PATTERNS_LIST:
             match = re.search(pattern, filename)
@@ -381,7 +414,6 @@ class MediaProcessorFactory:
             return VideoProcessor()
         else:
             raise MediaProcessor.FileTypeNotSupportedException("File type is not supported")
-
 
 
 
@@ -422,10 +454,9 @@ class ImageProcessor(MediaProcessor):
 
         # Delegate to im_feeling_lucky or just assume a capture date was not found
         if (IM_FEELING_LUCKY):
-            self.im_feeling_lucky(file_path)
+            return self.im_feeling_lucky(file_path)
         else:
             raise MediaProcessor.CouldNotExtractCaptureDateException("Could not extract a capture date")
-
 
 
 
@@ -466,10 +497,9 @@ class VideoProcessor(MediaProcessor):
 
         # Delegate to im_feeling_lucky or just assume a capture date was not found
         if (IM_FEELING_LUCKY):
-            self.im_feeling_lucky(file_path)
+            return self.im_feeling_lucky(file_path)
         else:
             raise MediaProcessor.CouldNotExtractCaptureDateException("Could not extract a capture date")
-
 
 
 
@@ -483,7 +513,7 @@ class Revert():
         If you only want to revert some of the changes, move all the files you 
         don't want to revert to a separate folder before running.
         '''
-        print("Starting revert operation...")
+        logger.info("Starting revert operation.")
         with open("./_Media Vault/_log.md", 'r') as file:
             content = file.readlines()
             for line in content:
@@ -496,14 +526,13 @@ class Revert():
                 try:
                     if os.path.exists(new_path):
                         os.rename(new_path, old_path)
-                        print(f"Renamed {new_path} to {old_path}")
+                        logger.debug(f"Renamed {new_path} to {old_path}")
                     else:
                         # File does not exist
                         pass
                 except Exception as e:
-                    print(f"An error occurred while processing {new_path}: {e}")
-
-
+                    logger.error(f"An error occurred while processing {new_path}: {e}")
+        logger.info("Success ;)")
 
 
 ##################################################################
@@ -520,7 +549,6 @@ def main():
     else:
         mediaVault = MediaVault()
         mediaVault.run()
-
 
 
 
